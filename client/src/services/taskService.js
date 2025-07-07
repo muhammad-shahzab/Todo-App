@@ -1,5 +1,6 @@
 const TASKS_KEY = "task-manager-tasks"
 const CATEGORIES_KEY = "task-manager-categories"
+const API_BASE_URL = "http://localhost:5000/api"
 
 const defaultCategories = [
   { name: "Home", color: "bg-red-500" },
@@ -10,6 +11,20 @@ const defaultCategories = [
 ]
 
 export const taskService = {
+  // Test API connection
+  testConnection: async () => {
+    try {
+      console.log("Testing API connection...")
+      const response = await fetch(`${API_BASE_URL}/test`)
+      const data = await response.json()
+      console.log("API test successful:", data)
+      return data
+    } catch (error) {
+      console.error("API test failed:", error)
+      throw error
+    }
+  },
+
   initializeData: () => {
     const categories = getStoredCategories()
 
@@ -23,19 +38,63 @@ export const taskService = {
     }
   },
 
-  getTasks: () => {
-    const tasks = getStoredTasks()
-    return tasks.map((task) => ({
-      ...task,
-      createdAt: new Date(task.createdAt),
-    }))
+  getTasks: async () => {
+    try {
+      console.log("Fetching tasks from API...")
+      const response = await fetch(`${API_BASE_URL}/tasks`)
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const dbTasks = await response.json()
+      console.log("Tasks fetched from API:", dbTasks)
+
+      // Get local task states (completion status, categories)
+      const localTasks = getStoredTasks()
+
+      // Convert DB tasks to your frontend format, merging with local state
+      const convertedTasks = dbTasks.map((dbTask) => {
+        // Find matching local task by checking if titles match
+        const localTask = localTasks.find((local) => local.title === dbTask.name || local.id === dbTask._id)
+
+        return {
+          id: dbTask._id,
+          title: dbTask.name,
+          completed: localTask ? localTask.completed : false, // Use local completion status
+          category: localTask ? localTask.category : { name: "Personal", color: "bg-purple-500" }, // Use local category
+          createdAt: new Date(dbTask.createdAt),
+        }
+      })
+
+      // Update localStorage with the merged data
+      const tasksForStorage = convertedTasks.map((task) => ({
+        ...task,
+        createdAt: task.createdAt.toISOString(),
+      }))
+      localStorage.setItem(TASKS_KEY, JSON.stringify(tasksForStorage))
+
+      console.log("Converted tasks:", convertedTasks)
+      return convertedTasks
+    } catch (error) {
+      console.error("Error fetching tasks from API:", error)
+      console.log("Falling back to localStorage...")
+      // Fallback to localStorage if API fails
+      const tasks = getStoredTasks()
+      return tasks.map((task) => ({
+        ...task,
+        createdAt: new Date(task.createdAt),
+      }))
+    }
   },
 
   getCategories: () => {
     return getStoredCategories()
   },
 
-  addTask: (title, categoryId) => {
+  addTask: async (title, categoryId) => {
+    console.log("Adding task:", { title, categoryId })
+
     const categories = getStoredCategories()
     const category = categories.find((cat) => cat.id === categoryId)
 
@@ -43,34 +102,85 @@ export const taskService = {
       throw new Error("Category not found")
     }
 
-    const tasks = getStoredTasks()
-    const newTask = {
-      id: `task-${Date.now()}-${Math.random()}`,
-      title,
-      completed: false,
-      category: { name: category.name, color: category.color },
-      createdAt: new Date().toISOString(),
-    }
+    try {
+      console.log("Sending task to API...")
+      const response = await fetch(`${API_BASE_URL}/tasks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: title }),
+      })
 
-    tasks.push(newTask)
-    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks))
+      console.log("API response status:", response.status)
 
-    return {
-      ...newTask,
-      createdAt: new Date(newTask.createdAt),
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error("API error response:", errorText)
+        throw new Error(`Failed to add task: ${response.status}`)
+      }
+
+      const dbTask = await response.json()
+      console.log("Task added to API:", dbTask)
+
+      // Create the new task in frontend format
+      const newTask = {
+        id: dbTask._id,
+        title: dbTask.name,
+        completed: false,
+        category: { name: category.name, color: category.color },
+        createdAt: new Date(dbTask.createdAt),
+      }
+
+      // Also add to localStorage for completion status tracking
+      const localTasks = getStoredTasks()
+      localTasks.push({
+        ...newTask,
+        createdAt: newTask.createdAt.toISOString(),
+      })
+      localStorage.setItem(TASKS_KEY, JSON.stringify(localTasks))
+
+      console.log("Returning formatted task:", newTask)
+      return newTask
+    } catch (error) {
+      console.error("Error adding task to API:", error)
+      console.log("Falling back to localStorage...")
+      // Fallback to localStorage if API fails
+      const tasks = getStoredTasks()
+      const newTask = {
+        id: `task-${Date.now()}-${Math.random()}`,
+        title,
+        completed: false,
+        category: { name: category.name, color: category.color },
+        createdAt: new Date().toISOString(),
+      }
+
+      tasks.push(newTask)
+      localStorage.setItem(TASKS_KEY, JSON.stringify(tasks))
+
+      return {
+        ...newTask,
+        createdAt: new Date(newTask.createdAt),
+      }
     }
   },
 
   toggleTask: (taskId) => {
+    console.log("Toggling task:", taskId)
+
     const tasks = getStoredTasks()
     const taskIndex = tasks.findIndex((task) => task.id === taskId)
 
     if (taskIndex === -1) {
+      console.error("Task not found in localStorage:", taskId)
       throw new Error("Task not found")
     }
 
+    // Toggle the completion status
     tasks[taskIndex].completed = !tasks[taskIndex].completed
     localStorage.setItem(TASKS_KEY, JSON.stringify(tasks))
+
+    console.log("Task toggled:", tasks[taskIndex])
 
     return {
       ...tasks[taskIndex],
@@ -78,17 +188,39 @@ export const taskService = {
     }
   },
 
-  deleteTask: (taskId) => {
-    const tasks = getStoredTasks()
-    const taskIndex = tasks.findIndex((task) => task.id === taskId)
+  deleteTask: async (taskId) => {
+    try {
+      console.log("Deleting task from API:", taskId)
+      const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, {
+        method: "DELETE",
+      })
 
-    if (taskIndex === -1) {
-      throw new Error("Task not found")
+      if (!response.ok) {
+        throw new Error(`Failed to delete task: ${response.status}`)
+      }
+
+      // Also remove from localStorage
+      const tasks = getStoredTasks()
+      const filteredTasks = tasks.filter((task) => task.id !== taskId)
+      localStorage.setItem(TASKS_KEY, JSON.stringify(filteredTasks))
+
+      console.log("Task deleted from API and localStorage successfully")
+      return { success: true }
+    } catch (error) {
+      console.error("Error deleting task from API:", error)
+      console.log("Falling back to localStorage...")
+      // Fallback to localStorage if API fails
+      const tasks = getStoredTasks()
+      const taskIndex = tasks.findIndex((task) => task.id === taskId)
+
+      if (taskIndex === -1) {
+        throw new Error("Task not found")
+      }
+
+      tasks.splice(taskIndex, 1)
+      localStorage.setItem(TASKS_KEY, JSON.stringify(tasks))
+      return { success: true }
     }
-
-    tasks.splice(taskIndex, 1)
-    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks))
-    return { success: true }
   },
 
   addCategory: (name, color) => {

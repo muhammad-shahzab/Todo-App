@@ -12,60 +12,85 @@ export default function TaskManager() {
   const [filter, setFilter] = useState("all")
   const [categoryFilter, setCategoryFilter] = useState(null)
   const [currentView, setCurrentView] = useState("tasks")
+  const [loading, setLoading] = useState(false)
 
   // Initialize data on mount
   useEffect(() => {
-    taskService.initializeData()
-    loadData()
+    const initializeApp = async () => {
+      taskService.initializeData()
+      await loadData()
+    }
+    initializeApp()
   }, [])
 
-  const loadData = () => {
-    const allTasks = taskService.getTasks()
-    const allCategories = taskService.getCategories()
-    setTasks(allTasks)
-    setCategories(allCategories)
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const allTasks = await taskService.getTasks()
+      const allCategories = taskService.getCategories()
+      setTasks(allTasks)
+      setCategories(allCategories)
+    } catch (error) {
+      console.error("Error loading data:", error)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const handleToggleTask = (taskId) => {
+  const handleToggleTask = async (taskId) => {
     try {
-      taskService.toggleTask(taskId)
-      loadData()
+      console.log("Toggling task in TaskManager:", taskId)
+      const updatedTask = taskService.toggleTask(taskId)
+      console.log("Task toggled, reloading data...")
+
+      // Update the tasks state immediately for better UX
+      setTasks((prevTasks) =>
+        prevTasks.map((task) => (task.id === taskId ? { ...task, completed: !task.completed } : task)),
+      )
     } catch (error) {
       console.error("Error toggling task:", error)
+      // Reload data if there's an error
+      await loadData()
     }
   }
 
-  const handleDeleteTask = (taskId) => {
+  const handleDeleteTask = async (taskId) => {
     try {
-      taskService.deleteTask(taskId)
-      loadData()
+      setLoading(true)
+      await taskService.deleteTask(taskId)
+      await loadData() // Reload data after delete
     } catch (error) {
       console.error("Error deleting task:", error)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const handleAddTask = (title, categoryId) => {
+  const handleAddTask = async (title, categoryId) => {
     try {
-      taskService.addTask(title, categoryId)
-      loadData()
+      setLoading(true)
+      await taskService.addTask(title, categoryId)
+      await loadData() // Reload data after add
     } catch (error) {
       console.error("Error adding task:", error)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const handleAddCategory = (name, color) => {
+  const handleAddCategory = async (name, color) => {
     try {
       taskService.addCategory(name, color)
-      loadData()
+      await loadData()
     } catch (error) {
       console.error("Error adding category:", error)
     }
   }
 
-  const handleDeleteCategory = (categoryId) => {
+  const handleDeleteCategory = async (categoryId) => {
     try {
       taskService.deleteCategory(categoryId)
-      loadData()
+      await loadData()
       if (categoryFilter === categoryId) {
         setCategoryFilter(null)
       }
@@ -91,6 +116,14 @@ export default function TaskManager() {
 
     return statusMatch && categoryMatch
   })
+
+  if (loading) {
+    return (
+      <div className="flex h-screen bg-gray-50 items-center justify-center">
+        <div className="text-gray-600">Loading...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen bg-gray-50">
